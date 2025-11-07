@@ -257,6 +257,26 @@ def dashboard():
     <div id="last_error">-</div>
   </div>
 
+  <!-- 🔹 SCRIPT DE FORMATO DE FECHAS -->
+  <script>
+    const TZ_OFFSET_MIN = -4 * 60; // UTC-4
+
+    function formatToUTC4(iso) {{
+      if (!iso) return '-';
+      const d = new Date(iso);
+      const utcMs = d.getTime();
+      const localMs = utcMs + TZ_OFFSET_MIN * 60 * 1000;
+      const ld = new Date(localMs);
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${{ld.getFullYear()}}-${{pad(ld.getMonth()+1)}}-${{pad(ld.getDate())}} ` +
+             `${{pad(ld.getHours())}}:${{pad(ld.getMinutes())}}:${{pad(ld.getSeconds())}} (UTC-4)`;
+    }}
+  </script>
+</script>
+
+
+
+
 <script>
   let nextPollIso = null;
 
