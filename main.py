@@ -11,8 +11,7 @@ from flask import Flask, jsonify, Response
 # =========================
 SYMBOL = "LTCUSDT"
 INTERVAL = "1m"
-NO = 3
-POLL_INTERVAL = 30  # cada cuánto el bot vuelve a mirar Binance
+NO = 3  # mismo que en tu Pine: cuántas velas miras para high/low
 
 IFTTT_EVENT = os.getenv("IFTTT_EVENT", "")
 IFTTT_KEY = os.getenv("IFTTT_KEY", "")
@@ -22,7 +21,6 @@ IFTTT_URL = (
     else None
 )
 
-# estado compartido que el panel va a mostrar
 state = {
     "bot_started_at": None,
     "last_price_time": None,
@@ -38,6 +36,11 @@ state = {
 # =========================
 # HELPERS
 # =========================
+def iso_utc(dt: datetime) -> str:
+    # siempre devolver con Z para que el navegador no se líe
+    return dt.replace(microsecond=0).isoformat() + "Z"
+
+
 def send_ifttt(title, price):
     if not IFTTT_URL:
         print(f"[IFTTT NO CONFIGURADO] {title} @ {price}")
@@ -74,20 +77,19 @@ def get_klines(limit=500):
     ]
 
 
-def wait_next_minute_from_binance():
-    """Nos alineamos con el minuto de Binance para no ir desfasados."""
+def get_binance_sleep():
+    """cuánto falta (en segundos) para que Binance cierre el próximo minuto"""
     try:
         r = requests.get("https://fapi.binance.com/fapi/v1/time", timeout=5)
         r.raise_for_status()
         server_ms = r.json()["serverTime"]
         server_s = server_ms / 1000.0
         sec_in_min = server_s % 60
-        to_sleep = 60 - sec_in_min + 1  # +1s de colchón
-        print(f"[SYNC] durmiendo {to_sleep:.1f}s para alinear con Binance…")
-        time.sleep(to_sleep)
+        to_sleep = 60 - sec_in_min + 0.5  # pequeño colchón
+        return to_sleep
     except Exception as e:
-        print("No se pudo sincronizar con Binance:", e)
-        time.sleep(5)
+        print("No se pudo sincronizar con Binance en esta vuelta:", e)
+        return 5  # fallback corto
 
 
 # =========================
@@ -99,34 +101,35 @@ def bot_loop():
     print("Hora inicio:", datetime.utcnow(), "UTC")
     print("=" * 60)
 
-    state["bot_started_at"] = datetime.utcnow().isoformat()
+    state["bot_started_at"] = iso_utc(datetime.utcnow())
 
-    # 1) alinearnos con Binance
-    wait_next_minute_from_binance()
-
-    # 2) cargar histórico
+    # cargar histórico
     candles = get_klines()
     closes = [c["close"] for c in candles]
     highs = [c["high"] for c in candles]
     lows = [c["low"] for c in candles]
 
-    avn_last = 0
-    tsl_list = []
     last_close_time = candles[-1]["close_time"]
-
-    # inicializar último precio en el panel
     state["last_price"] = closes[-1]
-    state["last_price_time"] = datetime.utcnow().isoformat()
-    state["next_poll_at"] = (datetime.utcnow() + timedelta(seconds=POLL_INTERVAL)).isoformat()
+    state["last_price_time"] = iso_utc(datetime.utcnow())
+
+    # variables para la lógica BUY/SELL
+    avn_last = 0        # última dirección válida (1 o -1)
+    prev_close = closes[-1]
+    prev_tsl = None
+
+    # programar primera actualización
+    sleep_secs = get_binance_sleep()
+    state["next_poll_at"] = iso_utc(datetime.utcnow() + timedelta(seconds=sleep_secs))
 
     while True:
         try:
+            # precio en tiempo casi real (última vela que da Binance)
             latest = get_klines(limit=2)
             last = latest[-1]
 
-            # actualizar “último precio” en panel
             state["last_price"] = last["close"]
-            state["last_price_time"] = datetime.utcnow().isoformat()
+            state["last_price_time"] = iso_utc(datetime.utcnow())
 
             # ¿cerró vela nueva?
             if last["close_time"] != last_close_time:
@@ -138,62 +141,60 @@ def bot_loop():
 
                 i = len(closes) - 1
                 start = max(0, i - NO + 1)
-                res = max(highs[start : i + 1])
-                sup = min(lows[start : i + 1])
+                res = max(highs[start : i + 1])  # high de las últimas NO velas
+                sup = min(lows[start : i + 1])   # low de las últimas NO velas
 
-                prev_res = (
-                    max(highs[max(0, i - 1 - NO + 1) : i]) if i - 1 >= 0 else None
-                )
-                prev_sup = (
-                    min(lows[max(0, i - 1 - NO + 1) : i]) if i - 1 >= 0 else None
-                )
+                # valores previos para detectar cambio de dirección
+                prev_res = max(highs[max(0, i - 1 - NO + 1) : i]) if i - 1 >= 0 else None
+                prev_sup = min(lows[max(0, i - 1 - NO + 1) : i]) if i - 1 >= 0 else None
 
                 c = closes[i]
                 avd = 0
-                if prev_res and c > prev_res:
+                if prev_res is not None and c > prev_res:
                     avd = 1
-                elif prev_sup and c < prev_sup:
+                elif prev_sup is not None and c < prev_sup:
                     avd = -1
 
                 if avd != 0:
                     avn_last = avd
 
+                # mismo que en Pine: si la dirección es alcista, sigo el sup, si no, el res
                 tsl = sup if avn_last == 1 else res
-                tsl_list.append(tsl)
 
-                # 👇 aquí estaba tu "list index out of range"
-                if i >= 1 and len(tsl_list) >= 2:
-                    prev_close = closes[i - 1]
-                    prev_tsl = tsl_list[i - 1]
-
+                # -------- lógica de cruce tipo Pine --------
+                if prev_tsl is not None:
                     buy = (prev_close <= prev_tsl) and (c > tsl)
                     sell = (prev_close >= prev_tsl) and (c < tsl)
-
-                    print(
-                        f"[{datetime.utcnow().strftime('%H:%M:%S')}] close={c} tsl={tsl} buy={buy} sell={sell}"
-                    )
-
-                    if buy:
-                        print("🔥 BUY SIGNAL")
-                        send_ifttt("Buy Signal", c)
-                        state["last_signal_time"] = datetime.utcnow().isoformat()
-                        state["last_signal_type"] = "buy"
-                        state["last_signal_price"] = c
-
-                    if sell:
-                        print("📉 SELL SIGNAL")
-                        send_ifttt("Sell Signal", c)
-                        state["last_signal_time"] = datetime.utcnow().isoformat()
-                        state["last_signal_type"] = "sell"
-                        state["last_signal_price"] = c
                 else:
-                    # todavía no hay datos suficientes
-                    pass
+                    buy = False
+                    sell = False
 
-            # programar próxima consulta
-            next_poll = datetime.utcnow() + timedelta(seconds=POLL_INTERVAL)
-            state["next_poll_at"] = next_poll.isoformat()
-            time.sleep(POLL_INTERVAL)
+                print(
+                    f"[{datetime.utcnow().strftime('%H:%M:%S')}] close={c} tsl={tsl} buy={buy} sell={sell}"
+                )
+
+                if buy:
+                    print("🔥 BUY SIGNAL")
+                    send_ifttt("Buy Signal", c)
+                    state["last_signal_time"] = iso_utc(datetime.utcnow())
+                    state["last_signal_type"] = "buy"
+                    state["last_signal_price"] = c
+
+                if sell:
+                    print("📉 SELL SIGNAL")
+                    send_ifttt("Sell Signal", c)
+                    state["last_signal_time"] = iso_utc(datetime.utcnow())
+                    state["last_signal_type"] = "sell"
+                    state["last_signal_price"] = c
+
+                # actualizar “previos” para la próxima vela
+                prev_close = c
+                prev_tsl = tsl
+
+            # calcular próxima consulta alineada a Binance
+            sleep_secs = get_binance_sleep()
+            state["next_poll_at"] = iso_utc(datetime.utcnow() + timedelta(seconds=sleep_secs))
+            time.sleep(sleep_secs)
 
         except Exception as e:
             print("Error en loop:", e)
@@ -209,7 +210,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def dashboard():
-    # HTML con panel y JS para formatear fechas en UTC-4
+    # mismo HTML que tenías, no lo toco salvo que ya estamos mandando fechas con Z
     html = f"""
 <!doctype html>
 <html>
@@ -265,22 +266,19 @@ def dashboard():
   </div>
 
   <script>
-    // ====== FORMATO DE FECHAS ======
     const TZ_OFFSET_MIN = -4 * 60; // UTC-4
 
     function formatToUTC4(iso) {{
       if (!iso) return '-';
-      const d = new Date(iso);
+      const d = new Date(iso); // ahora sí viene con Z
       const utcMs = d.getTime();
       const localMs = utcMs + TZ_OFFSET_MIN * 60 * 1000;
       const ld = new Date(localMs);
       const pad = (n) => String(n).padStart(2, '0');
-      // dd/mm/yyyy hh:mm:ss (UTC-4)
       return `${{pad(ld.getDate())}}/${{pad(ld.getMonth() + 1)}}/${{ld.getFullYear()}} ` +
              `${{pad(ld.getHours())}}:${{pad(ld.getMinutes())}}:${{pad(ld.getSeconds())}} (UTC-4)`;
     }}
 
-    // ====== LOGICA DEL PANEL ======
     let nextPollIso = null;
 
     async function loadStatus() {{
@@ -314,11 +312,8 @@ def dashboard():
       el.innerText = diff >= 0 ? diff + ' s' : 'actualizando…';
     }}
 
-    // carga inicial
     loadStatus();
-    // refrescar datos cada 10s
     setInterval(loadStatus, 10000);
-    // actualizar cuenta regresiva cada 1s
     setInterval(tickCountdown, 1000);
   </script>
 </body>
