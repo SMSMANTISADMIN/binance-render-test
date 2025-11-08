@@ -37,9 +37,8 @@ state = {
 # HELPERS
 # =========================
 def iso_utc(dt: datetime) -> str:
-    # ajustar a UTC-4 directamente
-    dt_local = dt - timedelta(hours=4)
-    return dt_local.replace(microsecond=0).isoformat() + " (UTC-4)"
+    # siempre devolver con Z para que el navegador no se líe
+    return dt.replace(microsecond=0).isoformat() + "Z"
 
 
 def send_ifttt(title, price):
