@@ -75,13 +75,14 @@ def get_klines(limit=500):
 
 
 def wait_next_minute_from_binance():
+    """Nos alineamos con el minuto de Binance para no ir desfasados."""
     try:
         r = requests.get("https://fapi.binance.com/fapi/v1/time", timeout=5)
         r.raise_for_status()
         server_ms = r.json()["serverTime"]
         server_s = server_ms / 1000.0
         sec_in_min = server_s % 60
-        to_sleep = 60 - sec_in_min + 1
+        to_sleep = 60 - sec_in_min + 1  # +1s de colchón
         print(f"[SYNC] durmiendo {to_sleep:.1f}s para alinear con Binance…")
         time.sleep(to_sleep)
     except Exception as e:
@@ -100,8 +101,10 @@ def bot_loop():
 
     state["bot_started_at"] = datetime.utcnow().isoformat()
 
+    # 1) alinearnos con Binance
     wait_next_minute_from_binance()
 
+    # 2) cargar histórico
     candles = get_klines()
     closes = [c["close"] for c in candles]
     highs = [c["high"] for c in candles]
@@ -111,7 +114,7 @@ def bot_loop():
     tsl_list = []
     last_close_time = candles[-1]["close_time"]
 
-    # inicializar último precio
+    # inicializar último precio en el panel
     state["last_price"] = closes[-1]
     state["last_price_time"] = datetime.utcnow().isoformat()
     state["next_poll_at"] = (datetime.utcnow() + timedelta(seconds=POLL_INTERVAL)).isoformat()
@@ -121,7 +124,7 @@ def bot_loop():
             latest = get_klines(limit=2)
             last = latest[-1]
 
-            # actualizar “último precio”
+            # actualizar “último precio” en panel
             state["last_price"] = last["close"]
             state["last_price_time"] = datetime.utcnow().isoformat()
 
@@ -158,7 +161,8 @@ def bot_loop():
                 tsl = sup if avn_last == 1 else res
                 tsl_list.append(tsl)
 
-                if i >= 1:
+                # 👇 aquí estaba tu "list index out of range"
+                if i >= 1 and len(tsl_list) >= 2:
                     prev_close = closes[i - 1]
                     prev_tsl = tsl_list[i - 1]
 
@@ -182,6 +186,9 @@ def bot_loop():
                         state["last_signal_time"] = datetime.utcnow().isoformat()
                         state["last_signal_type"] = "sell"
                         state["last_signal_price"] = c
+                else:
+                    # todavía no hay datos suficientes
+                    pass
 
             # programar próxima consulta
             next_poll = datetime.utcnow() + timedelta(seconds=POLL_INTERVAL)
@@ -202,7 +209,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def dashboard():
-    # HTML simple con JS que pide /status cada 5s
+    # HTML con panel y JS para formatear fechas en UTC-4
     html = f"""
 <!doctype html>
 <html>
@@ -257,8 +264,8 @@ def dashboard():
     <div id="last_error">-</div>
   </div>
 
-  <!-- 🔹 SCRIPT DE FORMATO DE FECHAS -->
   <script>
+    // ====== FORMATO DE FECHAS ======
     const TZ_OFFSET_MIN = -4 * 60; // UTC-4
 
     function formatToUTC4(iso) {{
@@ -268,57 +275,52 @@ def dashboard():
       const localMs = utcMs + TZ_OFFSET_MIN * 60 * 1000;
       const ld = new Date(localMs);
       const pad = (n) => String(n).padStart(2, '0');
-      return `${{ld.getFullYear()}}-${{pad(ld.getMonth()+1)}}-${{pad(ld.getDate())}} ` +
+      // dd/mm/yyyy hh:mm:ss (UTC-4)
+      return `${{pad(ld.getDate())}}/${{pad(ld.getMonth() + 1)}}/${{ld.getFullYear()}} ` +
              `${{pad(ld.getHours())}}:${{pad(ld.getMinutes())}}:${{pad(ld.getSeconds())}} (UTC-4)`;
     }}
+
+    // ====== LOGICA DEL PANEL ======
+    let nextPollIso = null;
+
+    async function loadStatus() {{
+      try {{
+        const res = await fetch('/status');
+        const data = await res.json();
+
+        document.getElementById('status').innerText = 'OK';
+        document.getElementById('started_at').innerText = formatToUTC4(data.bot_started_at);
+        document.getElementById('last_price').innerText = data.last_price !== null ? data.last_price : '-';
+        document.getElementById('last_price_time').innerText = formatToUTC4(data.last_price_time);
+        document.getElementById('last_signal_type').innerText = data.last_signal_type || '-';
+        document.getElementById('last_signal_price').innerText =
+          data.last_signal_price !== null ? data.last_signal_price : '-';
+        document.getElementById('last_signal_time').innerText = formatToUTC4(data.last_signal_time);
+        document.getElementById('next_poll_at').innerText = formatToUTC4(data.next_poll_at);
+        document.getElementById('last_error').innerText = data.last_error || '-';
+
+        nextPollIso = data.next_poll_at;
+      }} catch (e) {{
+        document.getElementById('status').innerText = 'ERROR';
+      }}
+    }}
+
+    function tickCountdown() {{
+      if (!nextPollIso) return;
+      const target = new Date(nextPollIso).getTime();
+      const now = Date.now();
+      const diff = Math.floor((target - now) / 1000);
+      const el = document.getElementById('countdown');
+      el.innerText = diff >= 0 ? diff + ' s' : 'actualizando…';
+    }}
+
+    // carga inicial
+    loadStatus();
+    // refrescar datos cada 10s
+    setInterval(loadStatus, 10000);
+    // actualizar cuenta regresiva cada 1s
+    setInterval(tickCountdown, 1000);
   </script>
-</script>
-
-
-
-
-<script>
-  let nextPollIso = null;
-
-  async function loadStatus() {{
-    try {{
-      const res = await fetch('/status');
-      const data = await res.json();
-      document.getElementById('status').innerText = 'OK';
-      document.getElementById('started_at').innerText = data.bot_started_at || '-';
-      document.getElementById('last_price').innerText = data.last_price !== null ? data.last_price : '-';
-      document.getElementById('last_price_time').innerText = data.last_price_time || '-';
-      document.getElementById('last_signal_type').innerText = data.last_signal_type || '-';
-      document.getElementById('last_signal_price').innerText = data.last_signal_price !== null ? data.last_signal_price : '-';
-      document.getElementById('last_signal_time').innerText = data.last_signal_time || '-';
-      document.getElementById('next_poll_at').innerText = data.next_poll_at || '-';
-      document.getElementById('last_error').innerText = data.last_error || '-';
-      nextPollIso = data.next_poll_at;
-    }} catch (e) {{
-      document.getElementById('status').innerText = 'ERROR';
-    }}
-  }}
-
-  function tickCountdown() {{
-    if (!nextPollIso) return;
-    const target = new Date(nextPollIso).getTime();
-    const now = Date.now();
-    const diff = Math.floor((target - now) / 1000);
-    const el = document.getElementById('countdown');
-    if (diff >= 0) {{
-      el.innerText = diff + ' s';
-    }} else {{
-      el.innerText = 'actualizando…';
-    }}
-  }}
-
-  // carga inicial
-  loadStatus();
-  // refrescar datos cada 5s
-  setInterval(loadStatus, 5000);
-  // actualizar cuenta regresiva cada 1s
-  setInterval(tickCountdown, 1000);
-</script>
 </body>
 </html>
     """
