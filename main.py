@@ -6,6 +6,25 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, jsonify, Response
 
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
+def send_telegram(msg: str):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("[TG NO CONFIGURADO]", msg)
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        r = requests.post(
+            url,
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
+            timeout=5,
+        )
+        print("TG →", r.status_code, msg)
+    except Exception as e:
+        print("Error enviando a Telegram:", e)
+
+
 # =========================
 # CONFIG
 # =========================
@@ -175,6 +194,7 @@ def bot_loop():
 
                 if buy:
                     print("🔥 BUY SIGNAL")
+                    send_telegram(f"🟢 BUY {SYMBOL} @ {c}")
                     send_ifttt("Buy Signal", c)
                     state["last_signal_time"] = iso_utc(datetime.utcnow())
                     state["last_signal_type"] = "buy"
@@ -182,6 +202,7 @@ def bot_loop():
 
                 if sell:
                     print("📉 SELL SIGNAL")
+                    send_telegram(f"🔴 SELL {SYMBOL} @ {c}")
                     send_ifttt("Sell Signal", c)
                     state["last_signal_time"] = iso_utc(datetime.utcnow())
                     state["last_signal_type"] = "sell"
