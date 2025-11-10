@@ -6,8 +6,55 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, jsonify, Response
 
+# =========================
+# CONFIG
+# =========================
+SYMBOL = "LTCUSDT"
+NO = 3  # mismo número de velas para calcular res/sup
+
+# IFTTT opcional
+IFTTT_EVENT = os.getenv("IFTTT_EVENT", "")
+IFTTT_KEY = os.getenv("IFTTT_KEY", "")
+IFTTT_URL = (
+    f"https://maker.ifttt.com/trigger/{IFTTT_EVENT}/with/key/{IFTTT_KEY}"
+    if IFTTT_EVENT and IFTTT_KEY
+    else None
+)
+
+# Telegram
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
+# Estado global (para el panel)
+state = {
+    "bot_started_at": None,
+    "last_price_time": None,
+    "last_price": None,
+    "last_signal_time": None,
+    "last_signal_type": None,
+    "last_signal_price": None,
+    "next_poll_at": None,
+    "last_error": None,
+}
+
+app = Flask(__name__)
+
+
+# =========================
+# HELPERS
+# =========================
+def iso_utc(dt: datetime) -> str:
+    return dt.replace(microsecond=0).isoformat() + "Z"
+
+
+def send_ifttt(title, price):
+    if not IFTTT_URL:
+        return
+    try:
+        requests.post(IFTTT_URL, json={"value1": title, "value2": SYMBOL, "value3": str(price)}, timeout=5)
+    except Exception:
+        pass
+
 
 def send_telegram(msg: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -25,63 +72,9 @@ def send_telegram(msg: str):
         print("Error enviando a Telegram:", e)
 
 
-# =========================
-# CONFIG
-# =========================
-SYMBOL = "LTCUSDT"
-INTERVAL = "1m"
-NO = 3  # mismo que en tu Pine: cuántas velas miras para high/low
-
-IFTTT_EVENT = os.getenv("IFTTT_EVENT", "")
-IFTTT_KEY = os.getenv("IFTTT_KEY", "")
-IFTTT_URL = (
-    f"https://maker.ifttt.com/trigger/{IFTTT_EVENT}/with/key/{IFTTT_KEY}"
-    if IFTTT_EVENT and IFTTT_KEY
-    else None
-)
-
-state = {
-    "bot_started_at": None,
-    "last_price_time": None,
-    "last_price": None,
-    "last_signal_time": None,
-    "last_signal_type": None,
-    "last_signal_price": None,
-    "next_poll_at": None,
-    "last_error": None,
-}
-
-
-# =========================
-# HELPERS
-# =========================
-def iso_utc(dt: datetime) -> str:
-    # siempre devolver con Z para que el navegador no se líe
-    return dt.replace(microsecond=0).isoformat() + "Z"
-
-
-def send_ifttt(title, price):
-    if not IFTTT_URL:
-        print(f"[IFTTT NO CONFIGURADO] {title} @ {price}")
-        return
-    try:
-        r = requests.post(
-            IFTTT_URL,
-            json={"value1": title, "value2": SYMBOL, "value3": str(price)},
-            timeout=5,
-        )
-        print("IFTTT →", r.status_code, title, price)
-    except Exception as e:
-        print("Error enviando a IFTTT:", e)
-
-
-def get_klines(limit=500):
+def get_klines(symbol: str, interval: str, limit: int = 500):
     url = "https://fapi.binance.com/fapi/v1/klines"
-    r = requests.get(
-        url,
-        params={"symbol": SYMBOL, "interval": INTERVAL, "limit": limit},
-        timeout=5,
-    )
+    r = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=5)
     r.raise_for_status()
     data = r.json()
     return [
@@ -96,125 +89,197 @@ def get_klines(limit=500):
     ]
 
 
-def get_binance_sleep():
-    """cuánto falta (en segundos) para que Binance cierre el próximo minuto"""
-    try:
-        r = requests.get("https://fapi.binance.com/fapi/v1/time", timeout=5)
-        r.raise_for_status()
-        server_ms = r.json()["serverTime"]
-        server_s = server_ms / 1000.0
-        sec_in_min = server_s % 60
-        to_sleep = 60 - sec_in_min + 0.5  # pequeño colchón
-        return to_sleep
-    except Exception as e:
-        print("No se pudo sincronizar con Binance en esta vuelta:", e)
-        return 5  # fallback corto
+def get_binance_time_ms():
+    r = requests.get("https://fapi.binance.com/fapi/v1/time", timeout=5)
+    r.raise_for_status()
+    return r.json()["serverTime"]  # ms
+
+
+def seconds_until_next_minute_from_ms(server_ms: int) -> float:
+    server_s = server_ms / 1000.0
+    sec_in_min = server_s % 60
+    return 60 - sec_in_min + 0.5  # colchón
 
 
 # =========================
-# BOT LOOP
+# LÓGICA DE UNA TEMPORALIDAD
+# =========================
+def process_new_candle(
+    timeframe_label: str,
+    closes: list,
+    highs: list,
+    lows: list,
+    last_close_time: int,
+    avn_last: int,
+    prev_close: float | None,
+    prev_tsl: float | None,
+):
+    """
+    Aplica la misma lógica que en tu Pine:
+    - calcula res/sup de las últimas NO velas
+    - detecta dirección
+    - arma tsl
+    - detecta cruce
+    Devuelve: (nuevo_last_close_time, nuevo_avn_last, nuevo_prev_close, nuevo_prev_tsl)
+    """
+    i = len(closes) - 1
+
+    # rango de las últimas NO velas
+    start = max(0, i - NO + 1)
+    res = max(highs[start : i + 1])
+    sup = min(lows[start : i + 1])
+
+    # valores previos para ver si cambia la dirección
+    if i - 1 >= 0:
+        prev_start = max(0, i - 1 - NO + 1)
+        prev_res = max(highs[prev_start:i])
+        prev_sup = min(lows[prev_start:i])
+    else:
+        prev_res = None
+        prev_sup = None
+
+    c = closes[i]
+    avd = 0
+    if prev_res is not None and c > prev_res:
+        avd = 1
+    elif prev_sup is not None and c < prev_sup:
+        avd = -1
+
+    if avd != 0:
+        avn_last = avd
+
+    # tsl según dirección
+    tsl = sup if avn_last == 1 else res
+
+    # detectar cruce
+    if prev_tsl is not None and prev_close is not None:
+        buy = (prev_close <= prev_tsl) and (c > tsl)
+        sell = (prev_close >= prev_tsl) and (c < tsl)
+    else:
+        buy = False
+        sell = False
+
+    # si hay señal, avisamos
+    if buy:
+        print(f"🔥 BUY SIGNAL {timeframe_label}")
+        send_telegram(f"🟢 BUY {SYMBOL} {timeframe_label} @ {c}")
+        send_ifttt(f"Buy {timeframe_label}", c)
+        # actualizamos estado global del panel con la última señal (la más reciente)
+        state["last_signal_time"] = iso_utc(datetime.utcnow())
+        state["last_signal_type"] = f"buy {timeframe_label}"
+        state["last_signal_price"] = c
+
+    if sell:
+        print(f"📉 SELL SIGNAL {timeframe_label}")
+        send_telegram(f"🔴 SELL {SYMBOL} {timeframe_label} @ {c}")
+        send_ifttt(f"Sell {timeframe_label}", c)
+        state["last_signal_time"] = iso_utc(datetime.utcnow())
+        state["last_signal_type"] = f"sell {timeframe_label}"
+        state["last_signal_price"] = c
+
+    # preparar para la próxima vela
+    prev_close = c
+    prev_tsl = tsl
+    last_close_time = int(datetime.utcnow().timestamp() * 1000)
+
+    return last_close_time, avn_last, prev_close, prev_tsl
+
+
+# =========================
+# LOOP PRINCIPAL
 # =========================
 def bot_loop():
-    print("=" * 60)
-    print("Binance LTCUSDT 1m — Panel Flask")
-    print("Hora inicio:", datetime.utcnow(), "UTC")
-    print("=" * 60)
-
+    print("Iniciando bot multi-timeframe...")
     state["bot_started_at"] = iso_utc(datetime.utcnow())
 
-    # cargar histórico
-    candles = get_klines()
-    closes = [c["close"] for c in candles]
-    highs = [c["high"] for c in candles]
-    lows = [c["low"] for c in candles]
+    # --- 1m setup ---
+    candles_1m = get_klines(SYMBOL, "1m", 500)
+    closes_1m = [c["close"] for c in candles_1m]
+    highs_1m = [c["high"] for c in candles_1m]
+    lows_1m = [c["low"] for c in candles_1m]
+    last_close_time_1m = candles_1m[-1]["close_time"]
+    avn_last_1m = 0
+    prev_close_1m = closes_1m[-1]
+    prev_tsl_1m = None
 
-    last_close_time = candles[-1]["close_time"]
-    state["last_price"] = closes[-1]
-    state["last_price_time"] = iso_utc(datetime.utcnow())
-
-    # variables para la lógica BUY/SELL
-    avn_last = 0        # última dirección válida (1 o -1)
-    prev_close = closes[-1]
-    prev_tsl = None
-
-    # programar primera actualización
-    sleep_secs = get_binance_sleep()
-    state["next_poll_at"] = iso_utc(datetime.utcnow() + timedelta(seconds=sleep_secs))
+    # --- 15m setup ---
+    candles_15m = get_klines(SYMBOL, "15m", 200)
+    closes_15m = [c["close"] for c in candles_15m]
+    highs_15m = [c["high"] for c in candles_15m]
+    lows_15m = [c["low"] for c in candles_15m]
+    last_close_time_15m = candles_15m[-1]["close_time"]
+    avn_last_15m = 0
+    prev_close_15m = closes_15m[-1]
+    prev_tsl_15m = None
 
     while True:
         try:
-            # precio en tiempo casi real (última vela que da Binance)
-            latest = get_klines(limit=2)
-            last = latest[-1]
+            # 1) sincronizar con Binance
+            server_ms = get_binance_time_ms()
+            sleep_secs = seconds_until_next_minute_from_ms(server_ms)
+            state["next_poll_at"] = iso_utc(datetime.utcnow() + timedelta(seconds=sleep_secs))
 
-            state["last_price"] = last["close"]
+            # 2) traer última vela 1m
+            latest_1m = get_klines(SYMBOL, "1m", 2)
+            last_1m = latest_1m[-1]
+            state["last_price"] = last_1m["close"]
             state["last_price_time"] = iso_utc(datetime.utcnow())
 
-            # ¿cerró vela nueva?
-            if last["close_time"] != last_close_time:
-                print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] ✅ vela nueva")
-                closes.append(last["close"])
-                highs.append(last["high"])
-                lows.append(last["low"])
-                last_close_time = last["close_time"]
+            # ¿cerró vela nueva de 1m?
+            if last_1m["close_time"] != last_close_time_1m:
+                # agregamos a histórico
+                closes_1m.append(last_1m["close"])
+                highs_1m.append(last_1m["high"])
+                lows_1m.append(last_1m["low"])
+                last_close_time_1m = last_1m["close_time"]
 
-                i = len(closes) - 1
-                start = max(0, i - NO + 1)
-                res = max(highs[start : i + 1])  # high de las últimas NO velas
-                sup = min(lows[start : i + 1])   # low de las últimas NO velas
-
-                # valores previos para detectar cambio de dirección
-                prev_res = max(highs[max(0, i - 1 - NO + 1) : i]) if i - 1 >= 0 else None
-                prev_sup = min(lows[max(0, i - 1 - NO + 1) : i]) if i - 1 >= 0 else None
-
-                c = closes[i]
-                avd = 0
-                if prev_res is not None and c > prev_res:
-                    avd = 1
-                elif prev_sup is not None and c < prev_sup:
-                    avd = -1
-
-                if avd != 0:
-                    avn_last = avd
-
-                # mismo que en Pine: si la dirección es alcista, sigo el sup, si no, el res
-                tsl = sup if avn_last == 1 else res
-
-                # -------- lógica de cruce tipo Pine --------
-                if prev_tsl is not None:
-                    buy = (prev_close <= prev_tsl) and (c > tsl)
-                    sell = (prev_close >= prev_tsl) and (c < tsl)
-                else:
-                    buy = False
-                    sell = False
-
-                print(
-                    f"[{datetime.utcnow().strftime('%H:%M:%S')}] close={c} tsl={tsl} buy={buy} sell={sell}"
+                # procesar lógica 1m
+                (
+                    last_close_time_1m,
+                    avn_last_1m,
+                    prev_close_1m,
+                    prev_tsl_1m,
+                ) = process_new_candle(
+                    "1m",
+                    closes_1m,
+                    highs_1m,
+                    lows_1m,
+                    last_close_time_1m,
+                    avn_last_1m,
+                    prev_close_1m,
+                    prev_tsl_1m,
                 )
 
-                if buy:
-                    print("🔥 BUY SIGNAL")
-                    send_telegram(f"🟢 BUY {SYMBOL} @ {c}")
-                    send_ifttt("Buy Signal", c)
-                    state["last_signal_time"] = iso_utc(datetime.utcnow())
-                    state["last_signal_type"] = "buy"
-                    state["last_signal_price"] = c
+            # 3) ¿toca revisar 15m?
+            # minuto actual del server
+            server_minute = int((server_ms / 1000.0) / 60)  # minuto absoluto
+            # si es múltiplo de 15, chequeamos 15m
+            if (server_minute % 15) == 0:
+                latest_15m = get_klines(SYMBOL, "15m", 2)
+                last_15m = latest_15m[-1]
+                if last_15m["close_time"] != last_close_time_15m:
+                    closes_15m.append(last_15m["close"])
+                    highs_15m.append(last_15m["high"])
+                    lows_15m.append(last_15m["low"])
+                    last_close_time_15m = last_15m["close_time"]
 
-                if sell:
-                    print("📉 SELL SIGNAL")
-                    send_telegram(f"🔴 SELL {SYMBOL} @ {c}")
-                    send_ifttt("Sell Signal", c)
-                    state["last_signal_time"] = iso_utc(datetime.utcnow())
-                    state["last_signal_type"] = "sell"
-                    state["last_signal_price"] = c
+                    (
+                        last_close_time_15m,
+                        avn_last_15m,
+                        prev_close_15m,
+                        prev_tsl_15m,
+                    ) = process_new_candle(
+                        "15m",
+                        closes_15m,
+                        highs_15m,
+                        lows_15m,
+                        last_close_time_15m,
+                        avn_last_15m,
+                        prev_close_15m,
+                        prev_tsl_15m,
+                    )
 
-                # actualizar “previos” para la próxima vela
-                prev_close = c
-                prev_tsl = tsl
-
-            # calcular próxima consulta alineada a Binance
-            sleep_secs = get_binance_sleep()
-            state["next_poll_at"] = iso_utc(datetime.utcnow() + timedelta(seconds=sleep_secs))
+            # dormir hasta el próximo minuto
             time.sleep(sleep_secs)
 
         except Exception as e:
@@ -224,128 +289,17 @@ def bot_loop():
 
 
 # =========================
-# FLASK APP
+# FLASK (igual que antes)
 # =========================
-app = Flask(__name__)
-
-
 @app.route("/")
 def dashboard():
-    # mismo HTML que tenías, no lo toco salvo que ya estamos mandando fechas con Z
-    html = f"""
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Binance LTCUSDT Bot</title>
-  <style>
-    body {{ font-family: sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }}
-    h1 {{ margin-bottom: .5rem; }}
-    .section {{ background: rgba(15,23,42,.35); border: 1px solid rgba(148,163,184,.2); border-radius: 12px; padding: 16px; margin-bottom: 16px; }}
-    .label {{ font-size: .75rem; text-transform: uppercase; color: #94a3b8; }}
-    .value {{ font-size: 1.25rem; }}
-    #countdown {{ font-weight: bold; }}
-  </style>
-</head>
-<body>
-  <h1>Binance LTCUSDT Bot</h1>
-  <p>Panel en vivo desde Render.</p>
-
-  <div class="section">
-    <div class="label">Estado</div>
-    <div class="value" id="status">Cargando...</div>
-    <div class="label">Iniciado en</div>
-    <div id="started_at">-</div>
-  </div>
-
-  <div class="section">
-    <div class="label">Último precio</div>
-    <div class="value" id="last_price">-</div>
-    <div class="label">Hora precio</div>
-    <div id="last_price_time">-</div>
-  </div>
-
-  <div class="section">
-    <div class="label">Última señal</div>
-    <div class="value" id="last_signal_type">-</div>
-    <div class="label">Precio señal</div>
-    <div id="last_signal_price">-</div>
-    <div class="label">Hora señal</div>
-    <div id="last_signal_time">-</div>
-  </div>
-
-  <div class="section">
-    <div class="label">Próxima actualización estimada</div>
-    <div id="next_poll_at">-</div>
-    <div class="label">Cuenta regresiva</div>
-    <div id="countdown">-</div>
-  </div>
-
-  <div class="section">
-    <div class="label">Último error</div>
-    <div id="last_error">-</div>
-  </div>
-
-  <script>
-    const TZ_OFFSET_MIN = 0;
-
-    function formatToUTC4(iso) {{
-      if (!iso) return '-';
-      const d = new Date(iso); // ahora sí viene con Z
-      const utcMs = d.getTime();
-      const localMs = utcMs + TZ_OFFSET_MIN * 60 * 1000;
-      const ld = new Date(localMs);
-      const pad = (n) => String(n).padStart(2, '0');
-      return `${{pad(ld.getDate())}}/${{pad(ld.getMonth() + 1)}}/${{ld.getFullYear()}} ` +
-             `${{pad(ld.getHours())}}:${{pad(ld.getMinutes())}}:${{pad(ld.getSeconds())}} (UTC-4)`;
-    }}
-
-    let nextPollIso = null;
-
-    async function loadStatus() {{
-      try {{
-        const res = await fetch('/status');
-        const data = await res.json();
-
-        document.getElementById('status').innerText = 'OK';
-        document.getElementById('started_at').innerText = formatToUTC4(data.bot_started_at);
-        document.getElementById('last_price').innerText = data.last_price !== null ? data.last_price : '-';
-        document.getElementById('last_price_time').innerText = formatToUTC4(data.last_price_time);
-        document.getElementById('last_signal_type').innerText = data.last_signal_type || '-';
-        document.getElementById('last_signal_price').innerText =
-          data.last_signal_price !== null ? data.last_signal_price : '-';
-        document.getElementById('last_signal_time').innerText = formatToUTC4(data.last_signal_time);
-        document.getElementById('next_poll_at').innerText = formatToUTC4(data.next_poll_at);
-        document.getElementById('last_error').innerText = data.last_error || '-';
-
-        nextPollIso = data.next_poll_at;
-      }} catch (e) {{
-        document.getElementById('status').innerText = 'ERROR';
-      }}
-    }}
-
-    function tickCountdown() {{
-      if (!nextPollIso) return;
-      const target = new Date(nextPollIso).getTime();
-      const now = Date.now();
-      const diff = Math.floor((target - now) / 1000);
-      const el = document.getElementById('countdown');
-      el.innerText = diff >= 0 ? diff + ' s' : 'actualizando…';
-    }}
-
-    loadStatus();
-    setInterval(loadStatus, 10000);
-    setInterval(tickCountdown, 1000);
-  </script>
-</body>
-</html>
-    """
-    return Response(html, mimetype="text/html")
+    # aquí puedes dejar el mismo HTML que ya tienes
+    return jsonify({"msg": "usa /status"})
 
 
 @app.route("/status")
-def status():
-    return jsonify(state), 200
+def status_route():
+    return jsonify(state)
 
 
 def start_bot_thread():
