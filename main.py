@@ -368,7 +368,7 @@ def dashboard():
   </div>
 
   <script>
-    const TZ_OFFSET_MIN = -4 * 60;
+    const TZ_OFFSET_MIN = 0;
     function formatToUTC4(iso) {{
       if (!iso) return '-';
       const d = new Date(iso);
