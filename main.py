@@ -4,6 +4,9 @@ import threading
 from datetime import datetime, timedelta
 import requests
 from flask import Flask, jsonify, Response, request
+from db import list_patterns, stats  # para el frontend
+from detector import run_detector    # para arrancar el detector en un thread
+
 
 # ======================================================
 # CONFIG
@@ -508,13 +511,32 @@ def toggle_route():
         "alerts_15m_enabled": state["alerts_15m_enabled"],
     })
 
+@app.route("/patterns", methods=["GET"])
+def patterns_route():
+    symbol = request.args.get("symbol")
+    tf = request.args.get("timeframe")
+    limit = int(request.args.get("limit", 50))
+    data = list_patterns(limit=limit, symbol=symbol, timeframe=tf)
+    return jsonify({"ok": True, "data": data})
+
+
+@app.route("/patterns/stats", methods=["GET"])
+def patterns_stats_route():
+    data = stats()
+    return jsonify({"ok": True, "data": data})
 
 def start_bot_thread():
     t = threading.Thread(target=bot_loop, daemon=True)
     t.start()
 
+def start_detector_thread():
+    # le pasamos la función de telegram del main
+    t = threading.Thread(target=run_detector, kwargs={"send_fn": send_telegram}, daemon=True)
+    t.start()    
+
 
 if __name__ == "__main__":
-    start_bot_thread()
+    start_bot_thread()        # tu bot de 1m y 15m
+    start_detector_thread()   # nuestro detector armónico
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
