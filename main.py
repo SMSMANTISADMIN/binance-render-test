@@ -3,7 +3,7 @@ import time
 import threading
 from datetime import datetime, timedelta
 import requests
-from flask import Flask, jsonify, Response
+from flask import Flask, jsonify, Response, request
 
 # ======================================================
 # CONFIG
@@ -48,6 +48,10 @@ state = {
 
     "next_poll_at": None,
     "last_error": None,
+
+    # NUEVO: switches
+    "alerts_1m_enabled": True,
+    "alerts_15m_enabled": True,
 }
 
 app = Flask(__name__)
@@ -121,6 +125,7 @@ def process_new_candle(
     avn_last: int,
     prev_close: float | None,
     prev_tsl: float | None,
+    alerts_enabled: bool,  # 👈 NUEVO
 ):
     """
     timeframe_label: "1m" o "15m"
@@ -159,44 +164,47 @@ def process_new_candle(
 
     now_iso = iso_utc(datetime.utcnow())
 
-    if buy:
-        print(f"🔥 BUY SIGNAL {timeframe_label}")
-        send_telegram(f"🟢 BUY {SYMBOL} {timeframe_label} @ {c}")
-        send_ifttt(f"Buy {timeframe_label}", c)
+    # solo si las alarmas de este TF están activas
+    if alerts_enabled:
+        if buy:
+            print(f"🔥 BUY SIGNAL {timeframe_label}")
+            send_telegram(f"🟢 BUY {SYMBOL} {timeframe_label} @ {c}")
+            send_ifttt(f"Buy {timeframe_label}", c)
 
-        # general
-        state["last_signal_time"] = now_iso
-        state["last_signal_type"] = f"buy {timeframe_label}"
-        state["last_signal_price"] = c
+            # general
+            state["last_signal_time"] = now_iso
+            state["last_signal_type"] = f"buy {timeframe_label}"
+            state["last_signal_price"] = c
 
-        # específico por timeframe
-        if timeframe_label == "1m":
-            state["last_signal_1m_time"] = now_iso
-            state["last_signal_1m_type"] = "buy"
-            state["last_signal_1m_price"] = c
-        else:
-            state["last_signal_15m_time"] = now_iso
-            state["last_signal_15m_type"] = "buy"
-            state["last_signal_15m_price"] = c
+            # específico por timeframe
+            if timeframe_label == "1m":
+                state["last_signal_1m_time"] = now_iso
+                state["last_signal_1m_type"] = "buy"
+                state["last_signal_1m_price"] = c
+            else:
+                state["last_signal_15m_time"] = now_iso
+                state["last_signal_15m_type"] = "buy"
+                state["last_signal_15m_price"] = c
 
-    if sell:
-        print(f"📉 SELL SIGNAL {timeframe_label}")
-        send_telegram(f"🔴 SELL {SYMBOL} {timeframe_label} @ {c}")
-        send_ifttt(f"Sell {timeframe_label}", c)
+        if sell:
+            print(f"📉 SELL SIGNAL {timeframe_label}")
+            send_telegram(f"🔴 SELL {SYMBOL} {timeframe_label} @ {c}")
+            send_ifttt(f"Sell {timeframe_label}", c)
 
-        state["last_signal_time"] = now_iso
-        state["last_signal_type"] = f"sell {timeframe_label}"
-        state["last_signal_price"] = c
+            state["last_signal_time"] = now_iso
+            state["last_signal_type"] = f"sell {timeframe_label}"
+            state["last_signal_price"] = c
 
-        if timeframe_label == "1m":
-            state["last_signal_1m_time"] = now_iso
-            state["last_signal_1m_type"] = "sell"
-            state["last_signal_1m_price"] = c
-        else:
-            state["last_signal_15m_time"] = now_iso
-            state["last_signal_15m_type"] = "sell"
-            state["last_signal_15m_price"] = c
+            if timeframe_label == "1m":
+                state["last_signal_1m_time"] = now_iso
+                state["last_signal_1m_type"] = "sell"
+                state["last_signal_1m_price"] = c
+            else:
+                state["last_signal_15m_time"] = now_iso
+                state["last_signal_15m_type"] = "sell"
+                state["last_signal_15m_price"] = c
 
+    # aunque las alarmas estén apagadas, actualizamos prev_* para que la lógica no se rompa
     prev_close = c
     prev_tsl = tsl
     last_close_time = int(datetime.utcnow().timestamp() * 1000)
@@ -258,6 +266,7 @@ def bot_loop():
                     avn_last_1m,
                     prev_close_1m,
                     prev_tsl_1m,
+                    alerts_enabled=state["alerts_1m_enabled"],
                 )
 
             # ===== 15 MINUTOS =====
@@ -280,6 +289,7 @@ def bot_loop():
                         avn_last_15m,
                         prev_close_15m,
                         prev_tsl_15m,
+                        alerts_enabled=state["alerts_15m_enabled"],
                     )
 
             time.sleep(sleep_secs)
@@ -308,6 +318,9 @@ def dashboard():
     .label {{ font-size: .75rem; text-transform: uppercase; color: #94a3b8; }}
     .value {{ font-size: 1.25rem; }}
     #countdown {{ font-weight: bold; }}
+    button {{ padding: 6px 12px; border: none; border-radius: 6px; cursor: pointer; margin-right: 8px; }}
+    .on {{ background: #22c55e; color: #0f172a; }}
+    .off {{ background: #ef4444; color: #fff; }}
   </style>
 </head>
 <body>
@@ -319,6 +332,14 @@ def dashboard():
     <div class="value" id="status">Cargando...</div>
     <div class="label">Iniciado en</div>
     <div id="started_at">-</div>
+  </div>
+
+  <div class="section">
+    <div class="label">Controles</div>
+    <div style="margin-top:8px;">
+      <button id="btn_1m" onclick="toggleAlert('1m')">...</button>
+      <button id="btn_15m" onclick="toggleAlert('15m')">...</button>
+    </div>
   </div>
 
   <div class="section">
@@ -377,9 +398,13 @@ def dashboard():
       const ld = new Date(localMs);
       const pad = (n) => String(n).padStart(2, '0');
       return `${{pad(ld.getDate())}}/${{pad(ld.getMonth()+1)}}/${{ld.getFullYear()}} ` +
-             `${{pad(ld.getHours())}}:${{pad(ld.getMinutes())}}:${{pad(ld.getSeconds())}} (UTC-4)`;
+             `${{pad(ld.getHours())}}:${{pad(ld.getMinutes())}}:${{pad(ld.getSeconds())}} (UTC)`;
     }}
+
     let nextPollIso = null;
+    let alerts1m = true;
+    let alerts15m = true;
+
     async function loadStatus() {{
       try {{
         const res = await fetch('/status');
@@ -408,11 +433,45 @@ def dashboard():
         document.getElementById('next_poll_at').innerText = formatToUTC4(data.next_poll_at);
         document.getElementById('last_error').innerText = data.last_error || '-';
 
+        alerts1m = data.alerts_1m_enabled;
+        alerts15m = data.alerts_15m_enabled;
+        paintButtons();
+
         nextPollIso = data.next_poll_at;
       }} catch (e) {{
         document.getElementById('status').innerText = 'ERROR';
       }}
     }}
+
+    function paintButtons() {{
+      const b1 = document.getElementById('btn_1m');
+      const b15 = document.getElementById('btn_15m');
+      if (alerts1m) {{
+        b1.textContent = 'Alarmas 1m: ON';
+        b1.className = 'on';
+      }} else {{
+        b1.textContent = 'Alarmas 1m: OFF';
+        b1.className = 'off';
+      }}
+      if (alerts15m) {{
+        b15.textContent = 'Alarmas 15m: ON';
+        b15.className = 'on';
+      }} else {{
+        b15.textContent = 'Alarmas 15m: OFF';
+        b15.className = 'off';
+      }}
+    }}
+
+    async function toggleAlert(tf) {{
+      await fetch('/toggle', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{ timeframe: tf }})
+      }});
+      // recargar estado
+      loadStatus();
+    }}
+
     function tickCountdown() {{
       if (!nextPollIso) return;
       const target = new Date(nextPollIso).getTime();
@@ -420,6 +479,7 @@ def dashboard():
       const diff = Math.floor((target - now) / 1000);
       document.getElementById('countdown').innerText = diff >= 0 ? diff + ' s' : 'actualizando…';
     }}
+
     loadStatus();
     setInterval(loadStatus, 10000);
     setInterval(tickCountdown, 1000);
@@ -433,6 +493,20 @@ def dashboard():
 @app.route("/status")
 def status_route():
     return jsonify(state)
+
+
+@app.route("/toggle", methods=["POST"])
+def toggle_route():
+    data = request.get_json(silent=True) or {}
+    tf = data.get("timeframe")
+    if tf == "1m":
+        state["alerts_1m_enabled"] = not state["alerts_1m_enabled"]
+    elif tf == "15m":
+        state["alerts_15m_enabled"] = not state["alerts_15m_enabled"]
+    return jsonify({
+        "alerts_1m_enabled": state["alerts_1m_enabled"],
+        "alerts_15m_enabled": state["alerts_15m_enabled"],
+    })
 
 
 def start_bot_thread():
