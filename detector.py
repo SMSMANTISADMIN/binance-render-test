@@ -10,35 +10,48 @@ from db import init_db, save_pattern
 BINANCE_BASE = "https://fapi.binance.com"
 SYMBOLS = ["LTCUSDT"]
 KLINES_LIMIT = 500
-DEFAULT_TOLERANCE = 0.12  # 12% fuera del rango teórico permitido
 
-# plantillas armónicas básicas
+# Umbral y tolerancia más estrictos
+MIN_SCORE = 70.0
+DEFAULT_TOLERANCE = 0.08  # 8%
+
+# Plantillas con chequeo extra por AD/XA o AD/XA extensión
 HARMONIC_TEMPLATES = [
+    # Gartley: D ≈ 0.786 de XA
     {
         "name": "Gartley",
         "ab_xa": (0.618, 0.618),
         "bc_ab": (0.382, 0.886),
         "cd_bc": (1.27, 1.618),
+        "ad_xa": (0.76, 0.82),   # ventana alrededor de 0.786 (ajustable)
     },
+    # Bat: D ≈ 0.886 de XA
     {
         "name": "Bat",
-        "ab_xa": (0.382, 0.5),
+        "ab_xa": (0.382, 0.50),
         "bc_ab": (0.382, 0.886),
         "cd_bc": (1.618, 2.618),
+        "ad_xa": (0.86, 0.91),   # ventana alrededor de 0.886
     },
+    # Butterfly: D = extensión 1.27–1.618 de XA
     {
         "name": "Butterfly",
         "ab_xa": (0.786, 0.786),
         "bc_ab": (0.382, 0.886),
         "cd_bc": (1.618, 2.24),
+        "ad_xa_ext": (1.27, 1.618),
     },
+    # Crab: D = extensión ~1.618 de XA (rango amplio)
     {
         "name": "Crab",
         "ab_xa": (0.382, 0.618),
         "bc_ab": (0.382, 0.886),
         "cd_bc": (2.24, 3.618),
+        "ad_xa_ext": (1.55, 1.75),
     },
+    # Cypher → la añadimos bien en el siguiente paso (usa AD/XC y C extensión de XA)
 ]
+
 
 
 # =========================================================
@@ -161,6 +174,7 @@ def validate_against_templates(cand):
     ab = abs(b - a)
     bc = abs(c - b)
     cd = abs(d - c)
+    ad = abs(d - a)
 
     if xa == 0 or ab == 0 or bc == 0:
         return False, 0.0, None
@@ -173,20 +187,32 @@ def validate_against_templates(cand):
         r_ab_xa = _ratio(ab, xa)
         r_bc_ab = _ratio(bc, ab)
         r_cd_bc = _ratio(cd, bc)
+        r_ad_xa = _ratio(ad, xa)
 
+        # pesos: retracciones 60–70%, AD/XA 30–40%
         s1 = score_ratio(r_ab_xa, *tpl["ab_xa"])
         s2 = score_ratio(r_bc_ab, *tpl["bc_ab"])
         s3 = score_ratio(r_cd_bc, *tpl["cd_bc"])
 
-        score = (s1 * 0.35) + (s2 * 0.30) + (s3 * 0.35)
-        score_pct = score * 100
+        # chequeo extra por AD/XA o extensión
+        if "ad_xa" in tpl:
+            s4 = score_ratio(r_ad_xa, *tpl["ad_xa"])
+        elif "ad_xa_ext" in tpl:
+            s4 = score_ratio(r_ad_xa, *tpl["ad_xa_ext"])
+        else:
+            s4 = 0.0
+
+        # ponderación: (AB/XA, BC/AB, CD/BC, AD/XA)
+        score = (s1 * 0.28) + (s2 * 0.24) + (s3 * 0.28) + (s4 * 0.20)
+        score_pct = score * 100.0
 
         if score_pct > best_score:
             best_score = score_pct
             best_name = tpl["name"]
-            best_ok = score_pct >= 55  # umbral mínimo
+            best_ok = score_pct >= MIN_SCORE
 
     return best_ok, best_score, best_name
+
 
 
 # =========================================================
@@ -197,13 +223,36 @@ def detect_for_tf(symbol: str, tf: str, send_fn, seen: set):
         klines = get_klines(symbol, tf, KLINES_LIMIT)
         pivots = find_pivots(klines, left=2, right=2)
         cands = build_candidates(pivots)
+
+        # 1) evaluamos todos
+        evaluated = []
         for cand in cands:
             ok, score, pname = validate_against_templates(cand)
             if not ok:
                 continue
-
             d_time = cand["d"]["time"]
-            dedup_key = f"{symbol}:{tf}:{d_time}:{pname}"
+            evaluated.append((d_time, score, pname, cand))
+
+        if not evaluated:
+            return
+
+        # 2) agrupamos por "bucket" de D (misma vela/minuto)
+        buckets = {}
+        for d_time, score, pname, cand in evaluated:
+            key = f"{symbol}:{tf}:{d_time//60000}"   # minuto de la D
+            cur = buckets.get(key)
+            if (cur is None) or (score > cur["score"]):
+                buckets[key] = {"score": score, "pname": pname, "cand": cand}
+
+        # 3) enviamos solo el mejor de cada bucket (y deduplicamos de verdad)
+        for key, item in buckets.items():
+            cand = item["cand"]
+            score = item["score"]
+            pname = item["pname"]
+            d_time = cand["d"]["time"]
+            direction = cand["direction"]
+
+            dedup_key = f"{symbol}:{tf}:{d_time}:{pname}:{direction}"
             if dedup_key in seen:
                 continue
 
@@ -215,12 +264,11 @@ def detect_for_tf(symbol: str, tf: str, send_fn, seen: set):
                 "d": datetime.utcfromtimestamp(cand["d"]["time"] / 1000).isoformat(),
             }
 
-            save_pattern(symbol, tf, pname, cand["direction"], score, points)
-            print(f"[detector] patrón {pname} {cand['direction']} {symbol} {tf} score={score:.1f}")
-
+            save_pattern(symbol, tf, pname, direction, score, points)
+            msg = f"📐 Patrón armónico {pname} {direction} en {symbol} TF={tf} score={score:.1f}"
+            print(f"[detector] {msg}")
             if send_fn:
-                send_fn(f"📐 Patrón armónico {pname} {cand['direction']} en {symbol} TF={tf} score={score:.1f}")
-
+                send_fn(msg)
             seen.add(dedup_key)
 
     except Exception as e:
