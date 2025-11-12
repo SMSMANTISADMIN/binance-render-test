@@ -315,16 +315,50 @@ def dashboard():
   <meta charset="utf-8" />
   <title>Binance LTCUSDT Bot</title>
   <style>
-    body {{ font-family: sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }}
-    h1 {{ margin-bottom: .5rem; }}
-    .section {{ background: rgba(15,23,42,.35); border: 1px solid rgba(148,163,184,.2); border-radius: 12px; padding: 16px; margin-bottom: 16px; }}
-    .label {{ font-size: .75rem; text-transform: uppercase; color: #94a3b8; }}
-    .value {{ font-size: 1.25rem; }}
-    #countdown {{ font-weight: bold; }}
-    button {{ padding: 6px 12px; border: none; border-radius: 6px; cursor: pointer; margin-right: 8px; }}
-    .on {{ background: #22c55e; color: #0f172a; }}
-    .off {{ background: #ef4444; color: #fff; }}
-  </style>
+  html { font-size: 18px; }
+  body {
+    font-family: system-ui, sans-serif;
+    background: #0f172a;
+    color: #f1f5f9;
+    margin: 0;
+    padding: 1rem;
+    line-height: 1.5;
+  }
+  h1 {
+    font-size: 1.8rem;
+    margin-bottom: .25rem;
+  }
+  .section {
+    background: rgba(15,23,42,.45);
+    border: 1px solid rgba(148,163,184,.25);
+    border-radius: 16px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .label {
+    font-size: .9rem;
+    color: #cbd5e1;
+    margin-top: .25rem;
+  }
+  .value {
+    font-size: 1.5rem;
+    font-weight: 600;
+  }
+  button {
+    width: 100%;
+    font-size: 1.1rem;
+    padding: .75rem;
+    border: none;
+    border-radius: 12px;
+    margin-top: .5rem;
+  }
+  .on { background: #22c55e; color: #0f172a; }
+  .off { background: #ef4444; color: #fff; }
+  @media (min-width:600px){
+    button { width:auto; margin-right:.5rem; }
+  }
+</style>
+
 </head>
 <body>
   <h1>Binance LTCUSDT Bot</h1>

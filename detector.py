@@ -11,7 +11,7 @@ KLINES_LIMIT = 500
 
 
 def get_klines(symbol: str, interval: str, limit: int = 500):
-    url = f"{BINANCE_BASE}/api/v3/klines"
+    url = f"{BINANCE_BASE}/fapi/v3/klines"
     params = {"symbol": symbol, "interval": interval, "limit": limit}
     resp = requests.get(url, params=params, timeout=10)
     resp.raise_for_status()
