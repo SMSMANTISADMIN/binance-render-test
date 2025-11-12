@@ -49,7 +49,15 @@ HARMONIC_TEMPLATES = [
         "cd_bc": (2.24, 3.618),
         "ad_xa_ext": (1.55, 1.75),
     },
-    # Cypher → la añadimos bien en el siguiente paso (usa AD/XC y C extensión de XA)
+    # Cypher (proxy por AD/XA; ideal: AD/XC≈0.786 y C=1.27–1.414 de XA)
+    {
+        "name": "Cypher",
+        "ab_xa": (0.382, 0.618),
+        "bc_ab": (1.27, 1.414),
+        "cd_bc": (1.27, 2.00),
+        "ad_xa": (0.74, 0.82),
+    },
+
 ]
 
 
@@ -218,13 +226,13 @@ def validate_against_templates(cand):
 # =========================================================
 # DETECCIÓN POR TF (llamado solo cuando toca)
 # =========================================================
-def detect_for_tf(symbol: str, tf: str, send_fn, seen: set):
+def detect_for_tf(symbol: str, tf: str, send_fn, log_fn, seen: set):
     try:
         klines = get_klines(symbol, tf, KLINES_LIMIT)
         pivots = find_pivots(klines, left=2, right=2)
         cands = build_candidates(pivots)
 
-        # 1) evaluamos todos
+        # 1) evaluar todos
         evaluated = []
         for cand in cands:
             ok, score, pname = validate_against_templates(cand)
@@ -236,15 +244,15 @@ def detect_for_tf(symbol: str, tf: str, send_fn, seen: set):
         if not evaluated:
             return
 
-        # 2) agrupamos por "bucket" de D (misma vela/minuto)
+        # 2) agrupar por bucket (misma vela de D)
         buckets = {}
         for d_time, score, pname, cand in evaluated:
-            key = f"{symbol}:{tf}:{d_time//60000}"   # minuto de la D
+            key = f"{symbol}:{tf}:{d_time//60000}"
             cur = buckets.get(key)
             if (cur is None) or (score > cur["score"]):
                 buckets[key] = {"score": score, "pname": pname, "cand": cand}
 
-        # 3) enviamos solo el mejor de cada bucket (y deduplicamos de verdad)
+        # 3) emitir solo el mejor por bucket (con dedupe)
         for key, item in buckets.items():
             cand = item["cand"]
             score = item["score"]
@@ -266,22 +274,36 @@ def detect_for_tf(symbol: str, tf: str, send_fn, seen: set):
 
             save_pattern(symbol, tf, pname, direction, score, points)
             msg = f"📐 Patrón armónico {pname} {direction} en {symbol} TF={tf} score={score:.1f}"
+
             print(f"[detector] {msg}")
+            if log_fn:
+                log_fn(msg)   # ← consola del panel
             if send_fn:
-                send_fn(msg)
+                send_fn(msg)  # ← Telegram
+
             seen.add(dedup_key)
 
     except Exception as e:
         print(f"[detector] error en {tf}: {e}")
+        if log_fn:
+            log_fn(f"[detector] error en {tf}: {e}")
+
 
 
 # =========================================================
 # LOOP PRINCIPAL CON TUS HORARIOS
 # =========================================================
-def run_detector(send_fn=None):
+def run_detector(send_fn=None, log_fn=None):
+    """Detector armónico con doble salida (console + Telegram)."""
+    if log_fn is None:
+        log_fn = lambda s: None  # no-op si no se pasa
+
+    log_fn("[detector] iniciado (horario 3x15m y 3x1h)")
     print("[detector] iniciando detector armónico (horario 3x15m y 3x1h)")
+
     init_db()
     seen = set()
+
 
     # para no ejecutar dos veces el mismo disparo
     last_run_15m = None
@@ -314,9 +336,10 @@ def run_detector(send_fn=None):
             run_15m = True
 
         if run_15m and last_run_15m != slot_15m:
-            # ejecutar para todos los símbolos en 15m
+            if log_fn:
+                log_fn(f"[ventana] 15m {slot_15m} → ejecutando detección")
             for sym in SYMBOLS:
-                detect_for_tf(sym, "15m", send_fn, seen)
+                detect_for_tf(sym, "15m", send_fn, log_fn, seen)
             last_run_15m = slot_15m
 
         # ---------- 1h ----------
@@ -335,8 +358,10 @@ def run_detector(send_fn=None):
             run_1h = True
 
         if run_1h and last_run_1h != slot_1h:
+            if log_fn:
+                log_fn(f"[ventana] 1h {slot_1h} → ejecutando detección")
             for sym in SYMBOLS:
-                detect_for_tf(sym, "1h", send_fn, seen)
+                detect_for_tf(sym, "1h", send_fn, log_fn, seen)
             last_run_1h = slot_1h
 
         # loop ligero
