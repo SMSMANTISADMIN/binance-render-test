@@ -332,6 +332,7 @@ def dashboard():
       color: var(--text);
       margin: 0;
       padding: 0;
+      font-size: 16px;
     }
     .page {
       max-width: 1200px;
@@ -352,7 +353,11 @@ def dashboard():
       padding: 1rem;
       min-height: 80px;
     }
-    .label { font-size: .75rem; color: var(--muted); margin-bottom: .25rem; }
+    .label {
+      font-size: .8rem;
+      color: var(--muted);
+      margin-bottom: .25rem;
+    }
     .value { font-size: 1.35rem; font-weight: 600; }
     .controls { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
     button {
@@ -366,7 +371,15 @@ def dashboard():
     .on { background: #22c55e; color: #0f172a; }
     .off { background: #ef4444; color: #fff; }
 
-    /* móvil */
+    /* móvil: mejora legibilidad */
+    @media (max-width: 599px) {
+      body { font-size: 24px; }
+      .card { padding: 1.1rem 1.1rem 1rem; }
+      .label { font-size: .9rem; }
+      header h1 { font-size: 1.35rem; }
+    }
+
+    /* tablet */
     @media (min-width: 600px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .span-2 { grid-column: span 2; }
@@ -453,7 +466,7 @@ def dashboard():
     let alerts1m = true;
     let alerts15m = true;
     let nextPollIso = null;
-    const TZ_OFFSET_MIN = 0; // pon -4 * 60 si quieres UTC-4
+    const TZ_OFFSET_MIN = -4 * 60; // ya lo tenías así
 
     function formatToTZ(iso) {
       if (!iso) return "-";
