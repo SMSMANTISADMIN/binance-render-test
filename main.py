@@ -314,157 +314,217 @@ def dashboard():
 <head>
   <meta charset="utf-8" />
   <title>Binance LTCUSDT Bot</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    html {{ font-size: 18px; }}
+    :root {{
+      --bg: #0f172a;
+      --card: rgba(15,23,42,0.35);
+      --border: rgba(148,163,184,0.25);
+      --text: #f1f5f9;
+      --muted: #cbd5e1;
+      --radius: 16px;
+      --gap: 1rem;
+    }}
+    * {{
+      box-sizing: border-box;
+    }}
+    html {{
+      font-size: 16px;
+    }}
     body {{
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #0f172a;
-      color: #f1f5f9;
+      background: var(--bg);
+      color: var(--text);
       margin: 0;
-      padding: 1rem;
-      line-height: 1.5;
+      padding: 0;
     }}
-    h1 {{
-      font-size: 1.8rem;
-      margin-bottom: .25rem;
-    }}
-    .section {{
-      background: rgba(15,23,42,.45);
-      border: 1px solid rgba(148,163,184,.25);
-      border-radius: 16px;
+    .page {{
+      max-width: 1200px;
+      margin: 0 auto;
       padding: 1rem;
-      margin-bottom: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }}
+    header h1 {{
+      font-size: 1.4rem;
+      margin: 0;
+    }}
+    header p {{
+      margin: 0.25rem 0 0;
+      color: var(--muted);
+      font-size: .85rem;
+    }}
+    .grid {{
+      display: grid;
+      gap: var(--gap);
+    }}
+    .card {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+      min-height: 80px;
     }}
     .label {{
-      font-size: .9rem;
-      color: #cbd5e1;
-      margin-top: .25rem;
+      font-size: .75rem;
+      color: var(--muted);
+      margin-bottom: .25rem;
     }}
     .value {{
-      font-size: 1.5rem;
+      font-size: 1.35rem;
       font-weight: 600;
     }}
-    button {{
-      width: 100%;
-      font-size: 1.1rem;
-      padding: .75rem;
-      border: none;
-      border-radius: 12px;
+    .controls {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
       margin-top: .5rem;
+    }}
+    button {{
+      font-size: .9rem;
+      padding: .5rem .9rem;
+      border: none;
+      border-radius: 9999px;
+      cursor: pointer;
+      font-weight: 600;
     }}
     .on {{ background: #22c55e; color: #0f172a; }}
     .off {{ background: #ef4444; color: #fff; }}
 
+    /* móvil: 1 columna */
     @media (min-width: 600px) {{
-      button {{ width: auto; margin-right: .5rem; }}
+      .grid {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+      .span-2 {{
+        grid-column: span 2;
+      }}
+    }}
+    /* escritorio grande: 3 columnas */
+    @media (min-width: 980px) {{
+      .grid {{
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }}
+      .span-3 {{
+        grid-column: span 3;
+      }}
     }}
   </style>
 </head>
 <body>
-  <h1>Binance LTCUSDT Bot</h1>
-  <p>Panel en vivo desde Render (1m + 15m)</p>
+  <div class="page">
+    <header class="card span-3">
+      <h1>Binance LTCUSDT Bot</h1>
+      <p>Panel en vivo desde Render (1m + 15m)</p>
+    </header>
 
-  <div class="section">
-    <div class="label">Estado</div>
-    <div class="value" id="status">Cargando...</div>
-    <div class="label">Iniciado en</div>
-    <div id="started_at">-</div>
-  </div>
+    <div class="grid">
+      <!-- Estado -->
+      <div class="card">
+        <div class="label">Estado</div>
+        <div class="value" id="status">Cargando…</div>
+        <div class="label" style="margin-top:.5rem;">Iniciado en</div>
+        <div id="started_at">-</div>
+      </div>
 
-  <div class="section">
-    <div class="label">Controles</div>
-    <div style="margin-top:8px;">
-      <button id="btn_1m" onclick="toggleAlert('1m')">...</button>
-      <button id="btn_15m" onclick="toggleAlert('15m')">...</button>
+      <!-- Controles -->
+      <div class="card">
+        <div class="label">Controles</div>
+        <div class="controls">
+          <button id="btn_1m" onclick="toggleAlert('1m')">.</button>
+          <button id="btn_15m" onclick="toggleAlert('15m')">.</button>
+        </div>
+      </div>
+
+      <!-- Último precio -->
+      <div class="card">
+        <div class="label">Último precio</div>
+        <div class="value" id="last_price">-</div>
+        <div class="label" style="margin-top:.5rem;">Hora precio</div>
+        <div id="last_price_time">-</div>
+      </div>
+
+      <!-- Última señal (cualquiera) -->
+      <div class="card">
+        <div class="label">Última señal (cualquiera)</div>
+        <div class="value" id="last_signal_type">-</div>
+        <div class="label" style="margin-top:.5rem;">Precio señal</div>
+        <div id="last_signal_price">-</div>
+        <div class="label" style="margin-top:.5rem;">Hora señal</div>
+        <div id="last_signal_time">-</div>
+      </div>
+
+      <!-- Última señal 1m -->
+      <div class="card">
+        <div class="label">Última señal 1m</div>
+        <div class="value" id="last_signal_1m_type">-</div>
+        <div class="label" style="margin-top:.5rem;">Precio 1m</div>
+        <div id="last_signal_1m_price">-</div>
+        <div class="label" style="margin-top:.5rem;">Hora 1m</div>
+        <div id="last_signal_1m_time">-</div>
+      </div>
+
+      <!-- Última señal 15m -->
+      <div class="card">
+        <div class="label">Última señal 15m</div>
+        <div class="value" id="last_signal_15m_type">-</div>
+        <div class="label" style="margin-top:.5rem;">Precio 15m</div>
+        <div id="last_signal_15m_price">-</div>
+        <div class="label" style="margin-top:.5rem;">Hora 15m</div>
+        <div id="last_signal_15m_time">-</div>
+      </div>
+
+      <!-- Próxima actualización -->
+      <div class="card">
+        <div class="label">Próxima actualización estimada</div>
+        <div id="next_poll_at">-</div>
+        <div class="label" style="margin-top:.5rem;">Cuenta regresiva</div>
+        <div id="countdown">-</div>
+      </div>
+
+      <!-- Último error -->
+      <div class="card span-2">
+        <div class="label">Último error</div>
+        <div id="last_error">-</div>
+      </div>
     </div>
   </div>
 
-  <div class="section">
-    <div class="label">Último precio</div>
-    <div class="value" id="last_price">-</div>
-    <div class="label">Hora precio</div>
-    <div id="last_price_time">-</div>
-  </div>
-
-  <div class="section">
-    <div class="label">Última señal (cualquiera)</div>
-    <div class="value" id="last_signal_type">-</div>
-    <div class="label">Precio señal</div>
-    <div id="last_signal_price">-</div>
-    <div class="label">Hora señal</div>
-    <div id="last_signal_time">-</div>
-  </div>
-
-  <div class="section">
-    <div class="label">Última señal 1m</div>
-    <div class="value" id="last_signal_1m_type">-</div>
-    <div class="label">Precio 1m</div>
-    <div id="last_signal_1m_price">-</div>
-    <div class="label">Hora 1m</div>
-    <div id="last_signal_1m_time">-</div>
-  </div>
-
-  <div class="section">
-    <div class="label">Última señal 15m</div>
-    <div class="value" id="last_signal_15m_type">-</div>
-    <div class="label">Precio 15m</div>
-    <div id="last_signal_15m_price">-</div>
-    <div class="label">Hora 15m</div>
-    <div id="last_signal_15m_time">-</div>
-  </div>
-
-  <div class="section">
-    <div class="label">Próxima actualización estimada</div>
-    <div id="next_poll_at">-</div>
-    <div class="label">Cuenta regresiva</div>
-    <div id="countdown">-</div>
-  </div>
-
-  <div class="section">
-    <div class="label">Último error</div>
-    <div id="last_error">-</div>
-  </div>
-
   <script>
-    const TZ_OFFSET_MIN = 0;
-    function formatToUTC4(iso) {{
-      if (!iso) return '-';
-      const d = new Date(iso);
-      const utcMs = d.getTime();
-      const localMs = utcMs + TZ_OFFSET_MIN * 60 * 1000;
-      const ld = new Date(localMs);
-      const pad = (n) => String(n).padStart(2, '0');
-      return `${{pad(ld.getDate())}}/${{pad(ld.getMonth()+1)}}/${{ld.getFullYear()}} ` +
-             `${{pad(ld.getHours())}}:${{pad(ld.getMinutes())}}:${{pad(ld.getSeconds())}} (UTC)`;
-    }}
-
-    let nextPollIso = null;
+    // mismo JS que ya tenías
     let alerts1m = true;
     let alerts15m = true;
+    let nextPollIso = null;
+    const TZ_OFFSET_MIN = 0; // si quieres UTC-4: const TZ_OFFSET_MIN = -4 * 60;
+
+    function formatToUTC4(iso) {{
+      if (!iso) return "-";
+      const d = new Date(iso);
+      d.setMinutes(d.getMinutes() + TZ_OFFSET_MIN);
+      return d.toISOString().replace("T", " ").substring(0, 19) + " (UTC{TZ_OFFSET_MIN/60})";
+    }}
 
     async function loadStatus() {{
       try {{
-        const res = await fetch('/status');
-        const data = await res.json();
-        document.getElementById('status').innerText = 'OK';
-        document.getElementById('started_at').innerText = formatToUTC4(data.bot_started_at);
+        const resp = await fetch('/status');
+        const data = await resp.json();
 
+        document.getElementById('status').innerText = data.last_error ? 'ERROR' : 'OK';
+        document.getElementById('started_at').innerText = formatToUTC4(data.bot_started_at);
         document.getElementById('last_price').innerText = data.last_price !== null ? data.last_price : '-';
         document.getElementById('last_price_time').innerText = formatToUTC4(data.last_price_time);
 
         document.getElementById('last_signal_type').innerText = data.last_signal_type || '-';
-        document.getElementById('last_signal_price').innerText =
-          data.last_signal_price !== null ? data.last_signal_price : '-';
+        document.getElementById('last_signal_price').innerText = data.last_signal_price !== null ? data.last_signal_price : '-';
         document.getElementById('last_signal_time').innerText = formatToUTC4(data.last_signal_time);
 
         document.getElementById('last_signal_1m_type').innerText = data.last_signal_1m_type || '-';
-        document.getElementById('last_signal_1m_price').innerText =
-          data.last_signal_1m_price !== null ? data.last_signal_1m_price : '-';
+        document.getElementById('last_signal_1m_price').innerText = data.last_signal_1m_price !== null ? data.last_signal_1m_price : '-';
         document.getElementById('last_signal_1m_time').innerText = formatToUTC4(data.last_signal_1m_time);
 
         document.getElementById('last_signal_15m_type').innerText = data.last_signal_15m_type || '-';
-        document.getElementById('last_signal_15m_price').innerText =
-          data.last_signal_15m_price !== null ? data.last_signal_15m_price : '-';
+        document.getElementById('last_signal_15m_price').innerText = data.last_signal_15m_price !== null ? data.last_signal_15m_price : '-';
         document.getElementById('last_signal_15m_time').innerText = formatToUTC4(data.last_signal_15m_time);
 
         document.getElementById('next_poll_at').innerText = formatToUTC4(data.next_poll_at);
@@ -524,6 +584,7 @@ def dashboard():
 </html>
     """
     return Response(html, mimetype="text/html")
+
 
 
 
