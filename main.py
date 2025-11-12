@@ -308,7 +308,7 @@ def bot_loop():
 # ======================================================
 @app.route("/")
 def dashboard():
-    html = f"""
+    html = """
 <!doctype html>
 <html>
 <head>
@@ -316,7 +316,7 @@ def dashboard():
   <title>Binance LTCUSDT Bot</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root {{
+    :root {
       --bg: #0f172a;
       --card: rgba(15,23,42,0.35);
       --border: rgba(148,163,184,0.25);
@@ -324,92 +324,58 @@ def dashboard():
       --muted: #cbd5e1;
       --radius: 16px;
       --gap: 1rem;
-    }}
-    * {{
-      box-sizing: border-box;
-    }}
-    html {{
-      font-size: 16px;
-    }}
-    body {{
+    }
+    * { box-sizing: border-box; }
+    body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: var(--bg);
       color: var(--text);
       margin: 0;
       padding: 0;
-    }}
-    .page {{
+    }
+    .page {
       max-width: 1200px;
       margin: 0 auto;
       padding: 1rem;
       display: flex;
       flex-direction: column;
       gap: 1rem;
-    }}
-    header h1 {{
-      font-size: 1.4rem;
-      margin: 0;
-    }}
-    header p {{
-      margin: 0.25rem 0 0;
-      color: var(--muted);
-      font-size: .85rem;
-    }}
-    .grid {{
-      display: grid;
-      gap: var(--gap);
-    }}
-    .card {{
+    }
+    header h1 { font-size: 1.4rem; margin: 0; }
+    header p { margin: .25rem 0 0; color: var(--muted); font-size: .85rem; }
+
+    .grid { display: grid; gap: var(--gap); }
+    .card {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 1rem;
       min-height: 80px;
-    }}
-    .label {{
-      font-size: .75rem;
-      color: var(--muted);
-      margin-bottom: .25rem;
-    }}
-    .value {{
-      font-size: 1.35rem;
-      font-weight: 600;
-    }}
-    .controls {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: .5rem;
-      margin-top: .5rem;
-    }}
-    button {{
+    }
+    .label { font-size: .75rem; color: var(--muted); margin-bottom: .25rem; }
+    .value { font-size: 1.35rem; font-weight: 600; }
+    .controls { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
+    button {
       font-size: .9rem;
       padding: .5rem .9rem;
       border: none;
       border-radius: 9999px;
       cursor: pointer;
       font-weight: 600;
-    }}
-    .on {{ background: #22c55e; color: #0f172a; }}
-    .off {{ background: #ef4444; color: #fff; }}
+    }
+    .on { background: #22c55e; color: #0f172a; }
+    .off { background: #ef4444; color: #fff; }
 
-    /* móvil: 1 columna */
-    @media (min-width: 600px) {{
-      .grid {{
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }}
-      .span-2 {{
-        grid-column: span 2;
-      }}
-    }}
-    /* escritorio grande: 3 columnas */
-    @media (min-width: 980px) {{
-      .grid {{
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-      }}
-      .span-3 {{
-        grid-column: span 3;
-      }}
-    }}
+    /* móvil */
+    @media (min-width: 600px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .span-2 { grid-column: span 2; }
+    }
+    /* escritorio grande */
+    @media (min-width: 980px) {
+      .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .span-3 { grid-column: span 3; }
+    }
   </style>
 </head>
 <body>
@@ -420,7 +386,6 @@ def dashboard():
     </header>
 
     <div class="grid">
-      <!-- Estado -->
       <div class="card">
         <div class="label">Estado</div>
         <div class="value" id="status">Cargando…</div>
@@ -428,7 +393,6 @@ def dashboard():
         <div id="started_at">-</div>
       </div>
 
-      <!-- Controles -->
       <div class="card">
         <div class="label">Controles</div>
         <div class="controls">
@@ -437,7 +401,6 @@ def dashboard():
         </div>
       </div>
 
-      <!-- Último precio -->
       <div class="card">
         <div class="label">Último precio</div>
         <div class="value" id="last_price">-</div>
@@ -445,7 +408,6 @@ def dashboard():
         <div id="last_price_time">-</div>
       </div>
 
-      <!-- Última señal (cualquiera) -->
       <div class="card">
         <div class="label">Última señal (cualquiera)</div>
         <div class="value" id="last_signal_type">-</div>
@@ -455,7 +417,6 @@ def dashboard():
         <div id="last_signal_time">-</div>
       </div>
 
-      <!-- Última señal 1m -->
       <div class="card">
         <div class="label">Última señal 1m</div>
         <div class="value" id="last_signal_1m_type">-</div>
@@ -465,7 +426,6 @@ def dashboard():
         <div id="last_signal_1m_time">-</div>
       </div>
 
-      <!-- Última señal 15m -->
       <div class="card">
         <div class="label">Última señal 15m</div>
         <div class="value" id="last_signal_15m_type">-</div>
@@ -475,7 +435,6 @@ def dashboard():
         <div id="last_signal_15m_time">-</div>
       </div>
 
-      <!-- Próxima actualización -->
       <div class="card">
         <div class="label">Próxima actualización estimada</div>
         <div id="next_poll_at">-</div>
@@ -483,7 +442,6 @@ def dashboard():
         <div id="countdown">-</div>
       </div>
 
-      <!-- Último error -->
       <div class="card span-2">
         <div class="label">Último error</div>
         <div id="last_error">-</div>
@@ -492,42 +450,43 @@ def dashboard():
   </div>
 
   <script>
-    // mismo JS que ya tenías
     let alerts1m = true;
     let alerts15m = true;
     let nextPollIso = null;
-    const TZ_OFFSET_MIN = 0; // si quieres UTC-4: const TZ_OFFSET_MIN = -4 * 60;
+    const TZ_OFFSET_MIN = 0; // pon -4 * 60 si quieres UTC-4
 
-    function formatToUTC4(iso) {{
+    function formatToTZ(iso) {
       if (!iso) return "-";
       const d = new Date(iso);
       d.setMinutes(d.getMinutes() + TZ_OFFSET_MIN);
-      return d.toISOString().replace("T", " ").substring(0, 19) + " (UTC{TZ_OFFSET_MIN/60})";
-    }}
+      const base = d.toISOString().replace("T", " ").substring(0, 19);
+      const offHr = TZ_OFFSET_MIN / 60;
+      return base + " (UTC" + (offHr >= 0 ? "+" + offHr : offHr) + ")";
+    }
 
-    async function loadStatus() {{
-      try {{
+    async function loadStatus() {
+      try {
         const resp = await fetch('/status');
         const data = await resp.json();
 
         document.getElementById('status').innerText = data.last_error ? 'ERROR' : 'OK';
-        document.getElementById('started_at').innerText = formatToUTC4(data.bot_started_at);
+        document.getElementById('started_at').innerText = formatToTZ(data.bot_started_at);
         document.getElementById('last_price').innerText = data.last_price !== null ? data.last_price : '-';
-        document.getElementById('last_price_time').innerText = formatToUTC4(data.last_price_time);
+        document.getElementById('last_price_time').innerText = formatToTZ(data.last_price_time);
 
         document.getElementById('last_signal_type').innerText = data.last_signal_type || '-';
         document.getElementById('last_signal_price').innerText = data.last_signal_price !== null ? data.last_signal_price : '-';
-        document.getElementById('last_signal_time').innerText = formatToUTC4(data.last_signal_time);
+        document.getElementById('last_signal_time').innerText = formatToTZ(data.last_signal_time);
 
         document.getElementById('last_signal_1m_type').innerText = data.last_signal_1m_type || '-';
         document.getElementById('last_signal_1m_price').innerText = data.last_signal_1m_price !== null ? data.last_signal_1m_price : '-';
-        document.getElementById('last_signal_1m_time').innerText = formatToUTC4(data.last_signal_1m_time);
+        document.getElementById('last_signal_1m_time').innerText = formatToTZ(data.last_signal_1m_time);
 
         document.getElementById('last_signal_15m_type').innerText = data.last_signal_15m_type || '-';
         document.getElementById('last_signal_15m_price').innerText = data.last_signal_15m_price !== null ? data.last_signal_15m_price : '-';
-        document.getElementById('last_signal_15m_time').innerText = formatToUTC4(data.last_signal_15m_time);
+        document.getElementById('last_signal_15m_time').innerText = formatToTZ(data.last_signal_15m_time);
 
-        document.getElementById('next_poll_at').innerText = formatToUTC4(data.next_poll_at);
+        document.getElementById('next_poll_at').innerText = formatToTZ(data.next_poll_at);
         document.getElementById('last_error').innerText = data.last_error || '-';
 
         alerts1m = data.alerts_1m_enabled;
@@ -535,46 +494,46 @@ def dashboard():
         paintButtons();
 
         nextPollIso = data.next_poll_at;
-      }} catch (e) {{
+      } catch (e) {
         document.getElementById('status').innerText = 'ERROR';
-      }}
-    }}
+      }
+    }
 
-    function paintButtons() {{
+    function paintButtons() {
       const b1 = document.getElementById('btn_1m');
       const b15 = document.getElementById('btn_15m');
-      if (alerts1m) {{
+      if (alerts1m) {
         b1.textContent = 'Alarmas 1m: ON';
         b1.className = 'on';
-      }} else {{
+      } else {
         b1.textContent = 'Alarmas 1m: OFF';
         b1.className = 'off';
-      }}
-      if (alerts15m) {{
+      }
+      if (alerts15m) {
         b15.textContent = 'Alarmas 15m: ON';
         b15.className = 'on';
-      }} else {{
+      } else {
         b15.textContent = 'Alarmas 15m: OFF';
         b15.className = 'off';
-      }}
-    }}
+      }
+    }
 
-    async function toggleAlert(tf) {{
-      await fetch('/toggle', {{
+    async function toggleAlert(tf) {
+      await fetch('/toggle', {
         method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
-        body: JSON.stringify({{ timeframe: tf }})
-      }});
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeframe: tf })
+      });
       loadStatus();
-    }}
+    }
 
-    function tickCountdown() {{
+    function tickCountdown() {
       if (!nextPollIso) return;
       const target = new Date(nextPollIso).getTime();
       const now = Date.now();
       const diff = Math.floor((target - now) / 1000);
       document.getElementById('countdown').innerText = diff >= 0 ? diff + ' s' : 'actualizando…';
-    }}
+    }
 
     loadStatus();
     setInterval(loadStatus, 10000);
@@ -584,8 +543,6 @@ def dashboard():
 </html>
     """
     return Response(html, mimetype="text/html")
-
-
 
 
 @app.route("/status")
